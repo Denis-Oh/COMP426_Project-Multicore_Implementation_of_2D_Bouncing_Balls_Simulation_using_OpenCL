@@ -34,5 +34,6 @@ target_link_libraries(BouncingBalls
     ${OpenGL_LIBRARY}
 )
 
-# Copy kernel file to build directory
-configure_file(${CMAKE_SOURCE_DIR}/kernel.cl ${CMAKE_BINARY_DIR}/kernel.cl COPYONLY)
+# Copy both kernel files to build directory
+configure_file(${CMAKE_SOURCE_DIR}/gpu_kernel.cl ${CMAKE_BINARY_DIR}/gpu_kernel.cl COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/cpu_kernel.cl ${CMAKE_BINARY_DIR}/cpu_kernel.cl COPYONLY)
