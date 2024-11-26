@@ -1,0 +1,26 @@
+# build directories
+/build/
+/cmake-build-debug/
+/cmake-build-release/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+
+# object files
+*.o
+*.obj
+
+# executable files
+*.exe
+*.out
+*.bin
+
+# log and backup files
+*.log
+*.bak
+*~
+
+# temporary files
+*.tmp
+*.temp

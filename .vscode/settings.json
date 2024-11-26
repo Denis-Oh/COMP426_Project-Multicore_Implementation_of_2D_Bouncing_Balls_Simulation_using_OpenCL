@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "*.cl": "opencl",
+        "*.clh": "opencl",
+        "string": "cpp"
+    },
+    "opencl.formatting.enable": true,
+    "[opencl]": {
+        "editor.semanticHighlighting.enabled": true
+    },
+    "C_Cpp.intelliSenseEngine": "default"
+}

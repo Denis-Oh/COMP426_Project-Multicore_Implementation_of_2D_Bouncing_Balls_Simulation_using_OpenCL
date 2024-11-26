@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "OpenCL",
+            "includePath": [
+                "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenCL.framework/Headers"
+            ],
+            "defines": [
+                "__OPENCL_VERSION__=120"
+            ],
+            "compilerPath": "",
+            "cStandard": "c11",
+            "intelliSenseMode": "macos-clang-arm64"
+        }
+    ],
+    "version": 4
+}
