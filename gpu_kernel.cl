@@ -1,144 +1,97 @@
-#define THREADS_PER_BALL 32
-#define LOCAL_SIZE 256
+typedef struct {
+    float4 position;  // x, y, radius, padding
+    float4 velocity;  // vx, vy, padding, padding
+    float4 color;     // r, g, b, alpha
+} BallState;
 
-// Kernel for handling physics calculations and collisions
 __kernel void updateBallPhysics(
-    __global float4* positions,
-    __global float4* velocities,
-    __global float4* colors,
+    __global BallState* states,
     const int numBalls,
     const float gravity,
     const float windowWidth,
     const float windowHeight,
-    __global int* computationComplete  // Synchronization flag
+    __global int* computationComplete
 ) {
-    __local float4 local_pos[16];
-    __local float4 local_vel[16];
-    __local float4 collision_impacts[16];
-    __local int collision_counts[16];
-    
     int global_id = get_global_id(0);
-    int local_id = get_local_id(0);
-    int ball_idx = global_id / THREADS_PER_BALL;
-    int thread_idx = global_id % THREADS_PER_BALL;
+    if (global_id >= numBalls) return;
     
-    if (ball_idx >= numBalls) return;
+    // Load the ball state
+    BallState state = states[global_id];
     
-    // Initialize local memory
-    if (thread_idx == 0) {
-        collision_impacts[ball_idx] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
-        collision_counts[ball_idx] = 0;
-        local_pos[ball_idx] = positions[ball_idx];
-        local_vel[ball_idx] = velocities[ball_idx];
+    // Update velocity and position
+    state.velocity.y += gravity;
+    state.position.x += state.velocity.x;
+    state.position.y += state.velocity.y;
+    
+    // Boundary collisions
+    float dampening = 0.95f;
+    float radius = state.position.z;
+    
+    // X boundaries
+    if (state.position.x - radius < 0) {
+        state.position.x = radius;
+        state.velocity.x = -state.velocity.x * dampening;
+    } else if (state.position.x + radius > windowWidth) {
+        state.position.x = windowWidth - radius;
+        state.velocity.x = -state.velocity.x * dampening;
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
     
-    float4 pos = local_pos[ball_idx];
-    float4 vel = local_vel[ball_idx];
-    
-    // Phase 1: Update positions
-    if (thread_idx == 0) {
-        vel.y += gravity;
-        pos.x += vel.x;
-        pos.y += vel.y;
+    // Y boundaries
+    if (state.position.y - radius < 0) {
+        state.position.y = radius;
+        state.velocity.y = -state.velocity.y * dampening;
+    } else if (state.position.y + radius > windowHeight) {
+        state.position.y = windowHeight - radius;
+        state.velocity.y = -state.velocity.y * dampening;
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
     
-    // Phase 2: Boundary collisions
-    if (thread_idx == 0) {
-        bool collided = false;
-        float dampening = 0.95f;
+    // Ball-to-ball collisions
+    for (int i = 0; i < numBalls; i++) {
+        if (i == global_id) continue;
         
-        // X boundaries
-        if (pos.x - pos.z < 0) {
-            pos.x = pos.z;
-            vel.x = -vel.x * dampening;
-            collided = true;
-        } else if (pos.x + pos.z > windowWidth) {
-            pos.x = windowWidth - pos.z;
-            vel.x = -vel.x * dampening;
-            collided = true;
-        }
-        
-        // Y boundaries
-        if (pos.y - pos.z < 0) {
-            pos.y = pos.z;
-            vel.y = -vel.y * dampening;
-            collided = true;
-        } else if (pos.y + pos.z > windowHeight) {
-            pos.y = windowHeight - pos.z;
-            vel.y = -vel.y * dampening;
-            collided = true;
-        }
-        
-        local_pos[ball_idx] = pos;
-        local_vel[ball_idx] = vel;
-    }
-    barrier(CLK_LOCAL_MEM_FENCE);
-    
-    // Phase 3: Ball-to-ball collisions
-    if (thread_idx < numBalls && thread_idx != ball_idx) {
-        float4 other_pos = local_pos[thread_idx];
-        float4 other_vel = local_vel[thread_idx];
-        
-        float dx = other_pos.x - pos.x;
-        float dy = other_pos.y - pos.y;
+        BallState other = states[i];
+        float dx = other.position.x - state.position.x;
+        float dy = other.position.y - state.position.y;
         float distance = sqrt(dx * dx + dy * dy);
-        float minDist = pos.z + other_pos.z;
+        float minDist = state.position.z + other.position.z;
         
         if (distance < minDist && distance > 0.0f) {
             float nx = dx / distance;
             float ny = dy / distance;
-            float overlap = minDist - distance;
             
-            if (ball_idx < thread_idx) {
-                pos.x -= nx * overlap * 0.5f;
-                pos.y -= ny * overlap * 0.5f;
+            if (global_id < i) {
+                float overlap = minDist - distance;
+                state.position.x -= nx * overlap * 0.5f;
+                state.position.y -= ny * overlap * 0.5f;
             }
             
-            float rvx = other_vel.x - vel.x;
-            float rvy = other_vel.y - vel.y;
+            float rvx = other.velocity.x - state.velocity.x;
+            float rvy = other.velocity.y - state.velocity.y;
             float velAlongNormal = rvx * nx + rvy * ny;
             
             if (velAlongNormal < 0) {
                 float restitution = 0.8f;
                 float j = -(1.0f + restitution) * velAlongNormal;
-                
-                float4 impact = collision_impacts[ball_idx];
-                impact.x += -j * nx;
-                impact.y += -j * ny;
-                collision_impacts[ball_idx] = impact;
-                
-                atomic_inc(&collision_counts[ball_idx]);
+                state.velocity.x += j * nx;
+                state.velocity.y += j * ny;
             }
         }
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
     
-    // Phase 4: Apply collision impacts and write results
-    if (thread_idx == 0) {
-        float4 impact = collision_impacts[ball_idx];
-        int count = collision_counts[ball_idx];
-        
-        if (count > 0) {
-            vel.x += impact.x / (float)count;
-            vel.y += impact.y / (float)count;
-        }
-        
-        float maxSpeed = 5.0f;
-        float speedSq = vel.x * vel.x + vel.y * vel.y;
-        if (speedSq > maxSpeed * maxSpeed) {
-            float scale = maxSpeed / sqrt(speedSq);
-            vel.x *= scale;
-            vel.y *= scale;
-        }
-        
-        positions[ball_idx] = pos;
-        velocities[ball_idx] = vel;
-
-        // Last ball sets completion flag
-        if (ball_idx == numBalls - 1) {
-            *computationComplete = 1;
-        }
+    // Speed limiting
+    float maxSpeed = 5.0f;
+    float speedSq = state.velocity.x * state.velocity.x + state.velocity.y * state.velocity.y;
+    if (speedSq > maxSpeed * maxSpeed) {
+        float scale = maxSpeed / sqrt(speedSq);
+        state.velocity.x *= scale;
+        state.velocity.y *= scale;
+    }
+    
+    // Write back results
+    states[global_id] = state;
+    
+    // Last thread sets completion flag
+    if (global_id == numBalls - 1) {
+        *computationComplete = 1;
     }
 }
