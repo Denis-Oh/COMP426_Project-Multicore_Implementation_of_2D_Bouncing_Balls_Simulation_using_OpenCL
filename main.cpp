@@ -80,10 +80,8 @@ private:
     
 public:
     BufferManager(cl_context context, cl_command_queue q, size_t numBalls) 
-        : queue(q) {
+        : queue(q), currentRead(0), currentWrite(1) {
         stateBuffers.resize(2);
-        currentRead = 0;
-        currentWrite = 1;
         
         cl_int error;
         for (int i = 0; i < 2; i++) {
@@ -91,29 +89,48 @@ public:
                 sizeof(Ball) * numBalls, nullptr, &error);
             checkError(error, "Create state buffer");
         }
-    }
-    
-    ~BufferManager() {
-        for (auto buffer : stateBuffers) {
-            clReleaseMemObject(buffer);
-        }
+        
+        std::cout << "Buffer Manager initialized with buffers: " 
+                  << stateBuffers[0] << " and " << stateBuffers[1] << std::endl;
     }
     
     void swap() {
         std::lock_guard<std::mutex> lock(mutex);
-        // Ensure all operations are complete before swapping
-        cl_int error = clFinish(queue);
-        checkError(error, "Finish queue before buffer swap");
+        std::cout << "Swapping buffers: " << currentRead << " <-> " << currentWrite << std::endl;
+        
+        // Log buffer contents for debugging
+        std::vector<Ball> beforeBalls(5);
+        cl_int error = clEnqueueReadBuffer(queue, stateBuffers[currentRead], CL_TRUE,
+            0, sizeof(Ball) * 5, beforeBalls.data(), 0, nullptr, nullptr);
+        checkError(error, "Read before swap");
+        
+        // Just swap the indices - data is already in proper buffers from GPU/CPU kernels
         std::swap(currentRead, currentWrite);
+        
+        // Log after swap
+        error = clEnqueueReadBuffer(queue, stateBuffers[currentRead], CL_TRUE,
+            0, sizeof(Ball) * 5, beforeBalls.data(), 0, nullptr, nullptr);
+        checkError(error, "Read after swap");
+        
+        // Print debug info
+        for (int i = 0; i < 5; i++) {
+            std::cout << "Ball " << i << ": pos=(" 
+                    << beforeBalls[i].position.s[0] << "," 
+                    << beforeBalls[i].position.s[1] << ") "
+                    << "vel=(" << beforeBalls[i].velocity.s[0] << "," 
+                    << beforeBalls[i].velocity.s[1] << ")" << std::endl;
+        }
     }
     
     cl_mem getReadBuffer() {
         std::lock_guard<std::mutex> lock(mutex);
+        std::cout << "Getting read buffer: " << currentRead << std::endl;
         return stateBuffers[currentRead];
     }
     
     cl_mem getWriteBuffer() {
         std::lock_guard<std::mutex> lock(mutex);
+        std::cout << "Getting write buffer: " << currentWrite << std::endl;
         return stateBuffers[currentWrite];
     }
 };
@@ -132,7 +149,7 @@ private:
     cl_device_id cpuDevice;
     cl_device_id gpuDevice;
     size_t numBalls;
-    const float gravity = -0.1f;
+    const float gravity = -9.81f * 10.0f;
     
     // Buffer management
     BufferManager* bufferManager;
@@ -350,12 +367,16 @@ private:
             while (!shouldStop()) {
                 waitForDisplay();
                 
-                // Run kernels in sequence
-                runCPUKernel();
-                runGPUKernel();
-                runStatsKernel();
+                // Get write buffer once
+                cl_mem writeBuffer = bufferManager->getWriteBuffer();
                 
-                // Swap buffers after computation is complete
+                // Run GPU kernel
+                runGPUKernel();
+                
+                // Run CPU validation
+                runCPUKernel();
+                
+                // Swap only after both GPU and CPU work is done
                 bufferManager->swap();
                 
                 signalComputationComplete();
@@ -367,41 +388,37 @@ private:
     }
     
     void render() {
-        // Finish any pending OpenCL operations before rendering
-        cl_int error = clFinish(cpuQueue);
-        checkError(error, "Finish CPU queue before render");
-        error = clFinish(gpuQueue);
-        checkError(error, "Finish GPU queue before render");
-
         glClear(GL_COLOR_BUFFER_BIT);
         
-        // Read current ball states
         std::vector<Ball> balls(numBalls);
-        error = clEnqueueReadBuffer(cpuQueue, bufferManager->getReadBuffer(), 
+        cl_int error = clEnqueueReadBuffer(cpuQueue, bufferManager->getReadBuffer(), 
             CL_TRUE, 0, sizeof(Ball) * numBalls, balls.data(), 0, nullptr, nullptr);
         checkError(error, "Read balls for render");
         
-        // Set up the view
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-
-        // Draw balls
+        static int frameCount = 0;
+        frameCount++;
+        std::cout << "===== FRAME " << frameCount << " =====" << std::endl;
+        
         for (size_t i = 0; i < numBalls; ++i) {
             const Ball& ball = balls[i];
-            glColor3f(ball.color.s[0], ball.color.s[1], ball.color.s[2]);
+            std::cout << "Ball " << i << ": pos=(" << ball.position.s[0] << ", " 
+                    << ball.position.s[1] << ") vel=(" << ball.velocity.s[0] << ", " 
+                    << ball.velocity.s[1] << ")" << std::endl;
             
+            glColor3f(ball.color.s[0], ball.color.s[1], ball.color.s[2]);
             glBegin(GL_TRIANGLE_FAN);
-            glVertex2f(ball.position.s[0], ball.position.s[1]);
+            glVertex2f(ball.position.s[0], ball.position.s[1]);  // Center
+            
+            float radius = ball.position.s[2];
             for (int angle = 0; angle <= 360; angle += 10) {
-                float radian = angle * 3.14159f / 180.0f;
-                float x = ball.position.s[0] + cos(radian) * ball.position.s[2];
-                float y = ball.position.s[1] + sin(radian) * ball.position.s[2];
+                float radian = angle * M_PI / 180.0f;
+                float x = ball.position.s[0] + cos(radian) * radius;
+                float y = ball.position.s[1] + sin(radian) * radius;
                 glVertex2f(x, y);
             }
             glEnd();
         }
-        // Ensure rendering is complete before proceeding
-        glFinish();
+
         glfwSwapBuffers(renderWindow);
     }
 
@@ -411,6 +428,12 @@ private:
         cl_mem readBuf = bufferManager->getReadBuffer();
         cl_mem writeBuf = bufferManager->getWriteBuffer();
         
+        // First copy the contents of writeBuf (which has GPU results) to readBuf
+        size_t bufferSize = sizeof(Ball) * numBalls;
+        error = clEnqueueCopyBuffer(cpuQueue, writeBuf, readBuf, 0, 0, bufferSize, 0, NULL, NULL);
+        checkError(error, "Copy GPU results");
+        
+        // Then run the CPU preparation kernel on readBuf
         error = clSetKernelArg(cpuPreparationKernel, 0, sizeof(cl_mem), &readBuf);
         error |= clSetKernelArg(cpuPreparationKernel, 1, sizeof(cl_mem), &writeBuf);
         error |= clSetKernelArg(cpuPreparationKernel, 2, sizeof(cl_mem), &flagBuffer);
@@ -423,6 +446,10 @@ private:
         error = clEnqueueNDRangeKernel(cpuQueue, cpuPreparationKernel, 1, nullptr,
             &globalSize, nullptr, 0, nullptr, nullptr);
         checkError(error, "Enqueue CPU preparation kernel");
+        
+        // Make sure the kernel is done
+        error = clFinish(cpuQueue);
+        checkError(error, "Finish CPU queue after preparation");
     }
     
     void runGPUKernel() {
@@ -521,40 +548,46 @@ private:
 void BallSimulation::initBalls(int numBalls) {
     std::vector<Ball> initialBalls(numBalls);
     
-    srand(static_cast<unsigned int>(time(0)));
-    float radius_options[] = {50.0f, 100.0f, 150.0f};
+    std::cout << "===== INITIALIZING BALLS =====" << std::endl;
     
     for (int i = 0; i < numBalls; ++i) {
         Ball& ball = initialBalls[i];
-        float radius = radius_options[rand() % 3];
         
-        // Position
-        ball.position.s[0] = radius + (rand() % (int)(windowWidth - 2 * radius));
-        ball.position.s[1] = radius + (rand() % (int)(windowHeight - 2 * radius));
-        ball.position.s[2] = radius;
+        ball.position.s[2] = 20.0f;  // radius
+        float radius = ball.position.s[2];
+        
+        // Set initial positions in visible area
+        ball.position.s[0] = windowWidth/2.0f;   // Start at center
+        ball.position.s[1] = windowHeight * 0.8f; // High up
         ball.position.s[3] = 0.0f;
         
-        // Velocity
-        ball.velocity.s[0] = (float)(rand() % 200 - 100) / 50.0f;
-        ball.velocity.s[1] = (float)(rand() % 200 - 100) / 50.0f;
+        // Set initial velocities
+        ball.velocity.s[0] = -50.0f + (i * 25.0f);  // Spread velocities
+        ball.velocity.s[1] = 0.0f;
         ball.velocity.s[2] = 0.0f;
         ball.velocity.s[3] = 0.0f;
         
-        // Color
-        ball.color.s[0] = (i % 3 == 0) ? 1.0f : 0.0f;
-        ball.color.s[1] = (i % 3 == 1) ? 1.0f : 0.0f;
-        ball.color.s[2] = (i % 3 == 2) ? 1.0f : 0.0f;
+        // Set colors
+        ball.color.s[0] = 0.8f;
+        ball.color.s[1] = 0.3f + 0.5f * (i / (float)numBalls);
+        ball.color.s[2] = 0.2f + 0.7f * (i / (float)numBalls);
         ball.color.s[3] = 1.0f;
+        
+        std::cout << "Ball " << i << " initialized at (" 
+                 << ball.position.s[0] << ", " << ball.position.s[1] 
+                 << ") with velocity (" << ball.velocity.s[0] << ", " 
+                 << ball.velocity.s[1] << ")" << std::endl;
     }
-    
-    // Write initial data to both buffers
+
     cl_int error = clEnqueueWriteBuffer(cpuQueue, bufferManager->getWriteBuffer(), 
         CL_TRUE, 0, sizeof(Ball) * numBalls, initialBalls.data(), 0, nullptr, nullptr);
-    checkError(error, "Write initial ball data");
+    checkError(error, "Write initial ball data to write buffer");
     
     error = clEnqueueWriteBuffer(cpuQueue, bufferManager->getReadBuffer(), 
         CL_TRUE, 0, sizeof(Ball) * numBalls, initialBalls.data(), 0, nullptr, nullptr);
     checkError(error, "Write initial ball data to read buffer");
+    
+    std::cout << "Initial data written to both buffers" << std::endl;
 }
 
 int main() {
@@ -582,14 +615,38 @@ int main() {
     
     // Initialize OpenGL
     std::cout << "Initializing OpenGL..." << std::endl;
-    glViewport(0, 0, 1200, 900);
+    
+    // Check window size
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    std::cout << "Actual framebuffer size: " << width << "x" << height << std::endl;
+    
+    // Set up viewport
+    glViewport(0, 0, width, height);
+    std::cout << "Viewport set to: 0, 0, " << width << ", " << height << std::endl;
+    
+    // Set up projection matrix
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, 1200, 900, 0, -1, 1);  // Note: Modified to match window coordinates
+    glOrtho(0.0f, width, 0.0f, height, -1.0f, 1.0f);
+    std::cout << "Ortho projection set to: 0, " << width << ", " << height << ", 0, -1, 1" << std::endl;
+    
+    // Set up modelview matrix
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    std::cout << "OpenGL initialized successfully" << std::endl;
+    std::cout << "Modelview matrix reset to identity" << std::endl;
+    
+    // Set clear color to light grey for debugging
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+    std::cout << "Clear color set to: 0.2, 0.2, 0.2, 1.0" << std::endl;
+    
+    // Check OpenGL errors
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        std::cout << "OpenGL initialization error: " << error << std::endl;
+    } else {
+        std::cout << "OpenGL initialization successful" << std::endl;
+    }
     
     try {
         std::cout << "Creating simulation..." << std::endl;

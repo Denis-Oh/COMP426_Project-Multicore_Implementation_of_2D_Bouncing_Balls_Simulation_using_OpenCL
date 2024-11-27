@@ -1,11 +1,9 @@
-// Structures for ball state management
 typedef struct {
     float4 position;  // x, y, radius, padding
     float4 velocity;  // vx, vy, padding, padding
     float4 color;     // r, g, b, alpha
 } BallState;
 
-// Kernel for data preparation and validation
 __kernel void prepareBallData(
     __global BallState* inputStates,
     __global BallState* outputStates,
@@ -16,30 +14,19 @@ __kernel void prepareBallData(
 ) {
     int idx = get_global_id(0);
     if (idx >= numBalls) return;
-
-    // Copy state
+    
+    // Copy input state to output state
     BallState state = inputStates[idx];
     
-    // Validate position bounds
-    float radius = state.position.z;
-    float minX = radius;
-    float maxX = windowWidth - radius;
-    float minY = radius;
-    float maxY = windowHeight - radius;
+    // Ensure position is within bounds and fix if necessary
+    float radius = state.position.s2;
     
-    // Clamp positions to valid ranges
-    state.position.x = clamp(state.position.x, minX, maxX);
-    state.position.y = clamp(state.position.y, minY, maxY);
+    // Clamp positions to stay within window bounds
+    state.position.s0 = clamp(state.position.s0, radius, windowWidth - radius);
+    state.position.s1 = clamp(state.position.s1, radius, windowHeight - radius);
     
-    // Validate velocities (prevent extreme values)
-    float maxVelocity = 10.0f;
-    state.velocity.x = clamp(state.velocity.x, -maxVelocity, maxVelocity);
-    state.velocity.y = clamp(state.velocity.y, -maxVelocity, maxVelocity);
-    
-    // Store validated state
+    // Write validated state to output buffer
     outputStates[idx] = state;
-    
-    // Set validation flag for this ball
     stateFlags[idx] = 1;
 }
 
@@ -52,14 +39,14 @@ __kernel void processStatistics(
     int idx = get_global_id(0);
     if (idx >= numBalls) return;
     
-    BallState state = states[idx];
-    float mass = state.position.z * 0.1f;  // Simple mass calculation based on radius
+    BallState localState = states[idx];
+    float mass = localState.position.s2 * 0.1f;  // Simple mass calculation based on radius
     
     // Calculate velocities and energies
-    float velocity = sqrt(state.velocity.x * state.velocity.x + 
-                        state.velocity.y * state.velocity.y);
+    float velocity = sqrt(localState.velocity.s0 * localState.velocity.s0 + 
+                        localState.velocity.s1 * localState.velocity.s1);
     float kineticEnergy = 0.5f * mass * velocity * velocity;
-    float potentialEnergy = mass * 9.81f * state.position.y;
+    float potentialEnergy = mass * 9.81f * localState.position.s1;
     float totalEnergy = kineticEnergy + potentialEnergy;
     
     // Convert float values to integers (multiply by 1000 to preserve 3 decimal places)
@@ -70,5 +57,5 @@ __kernel void processStatistics(
     atomic_add(&statsArray[0], velocityInt);     // Sum of velocities
     atomic_max(&statsArray[1], velocityInt);     // Max velocity
     atomic_add(&statsArray[2], energyInt);       // Total energy
-    atomic_add(&statsArray[3], 1);              // Counter for averaging
+    atomic_add(&statsArray[3], 1);               // Counter for averaging
 }
