@@ -1,39 +1,37 @@
 cmake_minimum_required(VERSION 3.10)
-project(BouncingBallsSimulation)
+project(BallSimulation)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find OpenCL
+# Find required packages
+find_package(OpenGL REQUIRED)
 find_package(OpenCL REQUIRED)
 
-# Set up framework paths for macOS
-set(CMAKE_OSX_SYSROOT "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")
+# Find GLFW
+if (APPLE)
+    include_directories(/opt/homebrew/include)
+    link_directories(/opt/homebrew/lib)
+endif()
 
-# Set GLFW paths
-set(GLFW_DIR "/opt/homebrew/opt/glfw")
-include_directories(${GLFW_DIR}/include)
-find_library(GLFW_LIBRARY glfw PATHS ${GLFW_DIR}/lib)
+# Add executable
+add_executable(BallSimulation main.cpp)
 
-# Include OpenGL
-find_library(OpenGL_LIBRARY OpenGL)
+# Link libraries
+if (APPLE)
+    target_link_libraries(BallSimulation
+        "-framework OpenGL"
+        "-framework OpenCL"
+        glfw
+    )
+else()
+    target_link_libraries(BallSimulation
+        OpenGL::GL
+        OpenCL::OpenCL
+        glfw
+    )
+endif()
 
-# Add the executable
-add_executable(BouncingBalls main.cpp)
-
-# Include directories for macOS
-target_include_directories(BouncingBalls PRIVATE 
-    ${OpenCL_INCLUDE_DIRS}
-    ${GLFW_DIR}/include
-    "/System/Library/Frameworks/OpenCL.framework/Headers"
-)
-
-# Link frameworks and libraries
-target_link_libraries(BouncingBalls
-    "-framework OpenCL"
-    ${GLFW_LIBRARY}
-    ${OpenGL_LIBRARY}
-)
-
-# Copy both kernel files to build directory
+# Copy kernel files to build directory
 configure_file(${CMAKE_SOURCE_DIR}/gpu_kernel.cl ${CMAKE_BINARY_DIR}/gpu_kernel.cl COPYONLY)
 configure_file(${CMAKE_SOURCE_DIR}/cpu_kernel.cl ${CMAKE_BINARY_DIR}/cpu_kernel.cl COPYONLY)

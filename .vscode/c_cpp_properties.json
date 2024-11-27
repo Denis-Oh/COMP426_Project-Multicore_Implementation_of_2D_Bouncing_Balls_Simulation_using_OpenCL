@@ -4,18 +4,19 @@
             "name": "Mac",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/opt/homebrew/opt/glfw/include",
-                "/System/Library/Frameworks/OpenCL.framework/Headers"
+                "/opt/homebrew/include",
+                "/System/Library/Frameworks/OpenCL.framework/Headers",
+                "/System/Library/Frameworks/OpenGL.framework/Headers"
             ],
             "defines": [],
-            "compilerPath": "/usr/bin/clang",
-            "cStandard": "c11",
+            "macFrameworkPath": [
+                "/Library/Developer/CommandLineTools/SDKs/MacOS.sdk/System/Library/Frameworks"
+            ],
+            "compilerPath": "/usr/bin/clang++",
+            "cStandard": "c17",
             "cppStandard": "c++17",
             "intelliSenseMode": "macos-clang-arm64",
-            "macFrameworkPath": [
-                "/System/Library/Frameworks",
-                "/Library/Frameworks"
-            ]
+            "configurationProvider": "ms-vscode.cmake-tools"
         }
     ],
     "version": 4
