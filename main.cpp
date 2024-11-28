@@ -9,7 +9,7 @@
 #include "ball_def.h"
 
 // Constants
-const int NUM_BALLS = 5;  
+const int NUM_BALLS = 2;
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
 const float MIN_RADIUS = 15.0f;    
@@ -54,9 +54,23 @@ void initOpenCL() {
     error = clGetPlatformIDs(1, &platform, &numPlatforms);
     checkError(error, "getting platform ID");
 
-    // Get device
+    // Print platform info
+    char platformName[128];
+    error = clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(platformName), 
+                             platformName, nullptr);
+    checkError(error, "getting platform info");
+    std::cout << "OpenCL Platform: " << platformName << std::endl;
+
+    // For M1, we want the default device
     error = clGetDeviceIDs(platform, CL_DEVICE_TYPE_DEFAULT, 1, &device, nullptr);
     checkError(error, "getting device");
+
+    // Print device info
+    char deviceName[128];
+    error = clGetDeviceInfo(device, CL_DEVICE_NAME, sizeof(deviceName), 
+                           deviceName, nullptr);
+    checkError(error, "getting device info");
+    std::cout << "OpenCL Device: " << deviceName << std::endl;
 
     // Create context
     cl_context_properties properties[] = {
@@ -161,54 +175,35 @@ void initGraphics() {
 
 // Initialize balls with random positions and velocities
 void initBalls() {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> posX(MAX_RADIUS, WINDOW_WIDTH - MAX_RADIUS);
-    std::uniform_real_distribution<float> posY(MAX_RADIUS, WINDOW_HEIGHT - MAX_RADIUS);
-    std::uniform_real_distribution<float> vel(-MAX_INITIAL_VELOCITY, MAX_INITIAL_VELOCITY);
-    std::uniform_real_distribution<float> radius(MIN_RADIUS, MAX_RADIUS);
-    
     std::vector<Ball> balls(NUM_BALLS);
     
-    // Different colors for each ball
-    const float colors[5][3] = {
-        {1.0f, 0.0f, 0.0f},  // Red
-        {0.0f, 1.0f, 0.0f},  // Green
-        {0.0f, 0.0f, 1.0f},  // Blue
-        {1.0f, 1.0f, 0.0f},  // Yellow
-        {1.0f, 0.0f, 1.0f}   // Magenta
-    };
-    
-    for (auto& ball : balls) {
-        // Ensure balls don't start too close to each other
-        bool validPosition = false;
-        while (!validPosition) {
-            ball.position.x = posX(gen);
-            ball.position.y = posY(gen);
-            ball.radius = radius(gen);
-            validPosition = true;
-            
-            // Check distance from other balls
-            for (int i = 0; i < &ball - balls.data(); i++) {
-                float dx = ball.position.x - balls[i].position.x;
-                float dy = ball.position.y - balls[i].position.y;
-                float minDist = ball.radius + balls[i].radius + 10.0f;  // More spacing
-                if (dx * dx + dy * dy < minDist * minDist) {
-                    validPosition = false;
-                    break;
-                }
-            }
-        }
+    for (int i = 0; i < NUM_BALLS; i++) {
+        // Add debug print
+        std::cout << "Initializing ball " << i << std::endl;
         
-        // Set very low initial velocity
-        ball.velocity.x = vel(gen) * 0.2f;
-        ball.velocity.y = vel(gen) * 0.2f;
+        balls[i].position.x = WINDOW_WIDTH / 2.0f + (i * 100);  // Space them out horizontally
+        balls[i].position.y = WINDOW_HEIGHT / 2.0f;             // Start at middle height
+        balls[i].velocity.x = (i % 2 == 0) ? 50.0f : -50.0f;   // Alternate directions
+        balls[i].velocity.y = 0.0f;                            // No initial vertical velocity
+        balls[i].radius = 20.0f;                               // Fixed radius
+
+        // Debug print after initialization
+        std::cout << "Ball " << i << " initialized: pos=(" 
+                  << balls[i].position.x << "," << balls[i].position.y 
+                  << "), vel=(" << balls[i].velocity.x << "," << balls[i].velocity.y 
+                  << "), radius=" << balls[i].radius << std::endl;
     }
-    
+
+    // Debug print before buffer write
+    std::cout << "Writing to OpenCL buffer..." << std::endl;
+
     cl_int error = clEnqueueWriteBuffer(queue, ballBuffer, CL_TRUE, 0, 
                                        sizeof(Ball) * NUM_BALLS, balls.data(), 
                                        0, nullptr, nullptr);
     checkError(error, "writing initial ball data");
+
+    // Debug print after buffer write
+    std::cout << "Buffer write complete." << std::endl;
 }
 
 // Render function
@@ -236,6 +231,10 @@ void render() {
     // Draw each ball
     for (int i = 0; i < NUM_BALLS; i++) {
         const Ball& ball = balls[i];
+        std::cout << "Ball " << i << ": pos=(" << ball.position.x << "," << ball.position.y 
+              << "), vel=(" << ball.velocity.x << "," << ball.velocity.y 
+              << "), radius=" << ball.radius << std::endl;
+
         const int segments = 32;
         
         // Set ball color

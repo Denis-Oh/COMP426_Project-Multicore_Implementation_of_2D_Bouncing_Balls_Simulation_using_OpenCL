@@ -1,17 +1,5 @@
 #include "ball_def.h"
 
-// Helper functions for float2 operations
-FLOAT2 float2_add(FLOAT2 a, FLOAT2 b) {
-    FLOAT2 result = {a.x + b.x, a.y + b.y};
-    return result;
-}
-
-FLOAT2 float2_multiply(FLOAT2 a, float scalar) {
-    FLOAT2 result = {a.x * scalar, a.y * scalar};
-    return result;
-}
-
-// Kernel to update ball positions and handle wall collisions
 __kernel void updateBallPositions(
     __global Ball* balls,
     const float deltaTime,
@@ -21,69 +9,57 @@ __kernel void updateBallPositions(
     int gid = get_global_id(0);
     if (gid >= numBalls) return;
 
+    // Use a single constant radius for all balls
+    const float BALL_RADIUS = 20.0f;
+    
     Ball ball = balls[gid];
-    float originalRadius = ball.radius;  // Store original radius
+    ball.radius = BALL_RADIUS;  // Enforce constant radius
     
-    // Very light gravity
-    ball.velocity.y += 10.0f * deltaTime;
-    
-    // Apply velocity with dampening if speed is too high
-    float maxSpeed = 100.0f;
-    float currentSpeed = sqrt(ball.velocity.x * ball.velocity.x + 
-                            ball.velocity.y * ball.velocity.y);
-    if (currentSpeed > maxSpeed) {
-        float scale = maxSpeed / currentSpeed;
-        ball.velocity.x *= scale;
-        ball.velocity.y *= scale;
-    }
+    // Gravity (reduced strength)
+    ball.velocity.y += 1.0f * deltaTime;
     
     // Update position
     ball.position.x += ball.velocity.x * deltaTime;
     ball.position.y += ball.velocity.y * deltaTime;
     
-    float dampening = 0.6f;
+    // Boundary collisions with dampening
+    const float dampening = 0.7f;
     
-    // Strict boundary enforcement
     // Right wall
-    if (ball.position.x + originalRadius >= boundaries.x) {
-        ball.position.x = boundaries.x - originalRadius;
+    if (ball.position.x + BALL_RADIUS > boundaries.x) {
+        ball.position.x = boundaries.x - BALL_RADIUS;
         ball.velocity.x = -fabs(ball.velocity.x) * dampening;
     }
     // Left wall
-    if (ball.position.x - originalRadius <= 0) {
-        ball.position.x = originalRadius;
+    if (ball.position.x - BALL_RADIUS < 0) {
+        ball.position.x = BALL_RADIUS;
         ball.velocity.x = fabs(ball.velocity.x) * dampening;
     }
     
     // Bottom wall
-    if (ball.position.y + originalRadius >= boundaries.y) {
-        ball.position.y = boundaries.y - originalRadius;
+    if (ball.position.y + BALL_RADIUS > boundaries.y) {
+        ball.position.y = boundaries.y - BALL_RADIUS;
         ball.velocity.y = -fabs(ball.velocity.y) * dampening;
     }
     // Top wall
-    if (ball.position.y - originalRadius <= 0) {
-        ball.position.y = originalRadius;
+    if (ball.position.y - BALL_RADIUS < 0) {
+        ball.position.y = BALL_RADIUS;
         ball.velocity.y = fabs(ball.velocity.y) * dampening;
     }
     
-    // Apply mild friction to gradually slow down
-    float friction = 0.98f;
-    ball.velocity.x *= friction;
-    ball.velocity.y *= friction;
-    
-    // Stop very slow movement
-    float minSpeed = 0.1f;
-    if (currentSpeed < minSpeed) {
-        ball.velocity.x = 0.0f;
-        ball.velocity.y = 0.0f;
+    // Apply friction when ball is on ground
+    if (fabs(ball.position.y - (boundaries.y - BALL_RADIUS)) < 1.0f) {
+        ball.velocity.x *= 0.99f;
     }
     
-    // Ensure radius hasn't changed
-    ball.radius = originalRadius;
-    
-    // Final position verification
-    ball.position.x = fmax(originalRadius, fmin(boundaries.x - originalRadius, ball.position.x));
-    ball.position.y = fmax(originalRadius, fmin(boundaries.y - originalRadius, ball.position.y));
+    // Enforce maximum velocity
+    const float MAX_SPEED = 300.0f;
+    float speed = sqrt(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
+    if (speed > MAX_SPEED) {
+        float scale = MAX_SPEED / speed;
+        ball.velocity.x *= scale;
+        ball.velocity.y *= scale;
+    }
     
     balls[gid] = ball;
 }

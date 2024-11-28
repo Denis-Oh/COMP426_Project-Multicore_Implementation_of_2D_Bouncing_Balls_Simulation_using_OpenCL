@@ -2,23 +2,19 @@
 #define BALL_DEF_H
 
 #ifdef __OPENCL_VERSION__
-    // Use OpenCL's built-in float2 when compiling for OpenCL
     #define FLOAT2 float2
 #else
-    // Define float2 struct for CPU code with both array and x/y access
-    typedef union {
-        struct {
-            float x;
-            float y;
-        };
-        float s[2];
-    } FLOAT2;
+    typedef struct {
+        float x;
+        float y;
+    } __attribute__((aligned(8))) FLOAT2;  // Ensure 8-byte alignment
 #endif
 
 typedef struct {
-    FLOAT2 position;    // x, y position
-    FLOAT2 velocity;    // x, y velocity components
-    float radius;       // ball radius
-} Ball;
+    FLOAT2 position;    // 8 bytes
+    FLOAT2 velocity;    // 8 bytes
+    float radius;       // 4 bytes
+    float padding;      // 4 bytes for alignment
+} __attribute__((aligned(16))) Ball;  // Ensure 16-byte alignment
 
 #endif // BALL_DEF_H
