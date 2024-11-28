@@ -5,15 +5,16 @@
 #include <iostream>
 #include <fstream>
 #include <chrono>
+#include <cmath>
 #include "ball_def.h"
 
 // Constants
-const int NUM_BALLS = 100;
+const int NUM_BALLS = 50; 
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
-const float MIN_RADIUS = 5.0f;
-const float MAX_RADIUS = 15.0f;
-const float MAX_INITIAL_VELOCITY = 200.0f;
+const float MIN_RADIUS = 10.0f;  
+const float MAX_RADIUS = 20.0f;  
+const float MAX_INITIAL_VELOCITY = 100.0f;  
 
 // OpenCL variables
 cl_platform_id platform;
@@ -130,6 +131,10 @@ void initGraphics() {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         exit(1);
     }
+
+    // Required for macOS to work correctly
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     
     window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Bouncing Balls", nullptr, nullptr);
     if (!window) {
@@ -140,6 +145,18 @@ void initGraphics() {
     
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);  // Enable vsync
+
+    // Set up the coordinate system
+    glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, WINDOW_WIDTH, WINDOW_HEIGHT, 0, -1, 1); // Note: Y-axis flipped for standard screen coordinates
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    
+    // Enable blending for smoother rendering
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 // Initialize balls with random positions and velocities
@@ -153,9 +170,37 @@ void initBalls() {
     
     std::vector<Ball> balls(NUM_BALLS);
     for (auto& ball : balls) {
-        ball.position = {posX(gen), posY(gen)};  
-        ball.velocity = {vel(gen), vel(gen)};    
-        ball.radius = radius(gen);
+        // Ensure balls don't start too close to each other
+        bool validPosition = false;
+        while (!validPosition) {
+            ball.position.x = posX(gen);
+            ball.position.y = posY(gen);
+            ball.radius = radius(gen);
+            validPosition = true;
+            
+            // Check distance from other balls
+            for (int i = 0; i < &ball - balls.data(); i++) {
+                float dx = ball.position.x - balls[i].position.x;
+                float dy = ball.position.y - balls[i].position.y;
+                float minDist = ball.radius + balls[i].radius;
+                if (dx * dx + dy * dy < minDist * minDist) {
+                    validPosition = false;
+                    break;
+                }
+            }
+        }
+        
+        // Set random velocity
+        ball.velocity.x = vel(gen);
+        ball.velocity.y = vel(gen);
+        
+        // Ensure minimum speed
+        float speed = sqrt(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
+        if (speed < MAX_INITIAL_VELOCITY * 0.2f) {
+            float scale = MAX_INITIAL_VELOCITY * 0.2f / speed;
+            ball.velocity.x *= scale;
+            ball.velocity.y *= scale;
+        }
     }
     
     cl_int error = clEnqueueWriteBuffer(queue, ballBuffer, CL_TRUE, 0, 
@@ -166,8 +211,9 @@ void initBalls() {
 
 // Render function
 void render() {
+    // Clear the screen to black
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    glLoadIdentity();
     
     // Read ball data back
     std::vector<Ball> balls(NUM_BALLS);
@@ -176,12 +222,43 @@ void render() {
                                       0, nullptr, nullptr);
     checkError(error, "reading ball data for rendering");
     
-    // Draw balls
-    glPointSize(5.0f);
-    glBegin(GL_POINTS);
+    // Draw each ball
     for (const auto& ball : balls) {
-        glVertex2f(ball.position.s[0], ball.position.s[1]);
+        const int segments = 32;
+        glColor3f(1.0f, 0.5f, 0.2f);  // Orange color
+        
+        glBegin(GL_TRIANGLE_FAN);
+        // Center vertex
+        glVertex2f(ball.position.x, ball.position.y);
+        
+        // Circle vertices
+        for (int i = 0; i <= segments; i++) {
+            float angle = 2.0f * M_PI * i / segments;
+            float x = ball.position.x + cos(angle) * ball.radius;
+            float y = ball.position.y + sin(angle) * ball.radius;
+            glVertex2f(x, y);
+        }
+        glEnd();
+        
+        // Draw outline
+        glColor3f(1.0f, 1.0f, 1.0f);  // White outline
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < segments; i++) {
+            float angle = 2.0f * M_PI * i / segments;
+            float x = ball.position.x + cos(angle) * ball.radius;
+            float y = ball.position.y + sin(angle) * ball.radius;
+            glVertex2f(x, y);
+        }
+        glEnd();
     }
+    
+    // Debug: Draw window boundaries
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(0, 0);
+    glVertex2f(WINDOW_WIDTH, 0);
+    glVertex2f(WINDOW_WIDTH, WINDOW_HEIGHT);
+    glVertex2f(0, WINDOW_HEIGHT);
     glEnd();
     
     glfwSwapBuffers(window);
@@ -201,30 +278,41 @@ void cleanup() {
 }
 
 int main() {
-    // Initialize OpenCL and Graphics
     initOpenCL();
-    initGraphics();
+    initGraphics();  // This must come after initOpenCL
     initBalls();
-    
-    // Set up OpenGL viewport
-    glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0, WINDOW_WIDTH, 0, WINDOW_HEIGHT, -1, 1);
-    glMatrixMode(GL_MODELVIEW);
-    
-    // Main loop
+
     auto lastTime = std::chrono::high_resolution_clock::now();
+    int frameCount = 0;
+    auto lastFPSTime = lastTime;
+    
     while (!glfwWindowShouldClose(window)) {
-        // Calculate delta time
         auto currentTime = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
-        
-        // Set kernel arguments and run GPU kernel
-        FLOAT2 boundaries = {WINDOW_WIDTH, WINDOW_HEIGHT};
-        cl_int error;
 
+        // Cap delta time
+        if (deltaTime > 0.05f) deltaTime = 0.05f;
+        
+        // Update FPS counter
+        frameCount++;
+        auto fpsDuration = std::chrono::duration<float>(currentTime - lastFPSTime).count();
+        if (fpsDuration >= 1.0f) {
+            float fps = frameCount / fpsDuration;
+            std::cout << "FPS: " << fps << ", Delta Time: " << deltaTime << std::endl;
+            frameCount = 0;
+            lastFPSTime = currentTime;
+        }
+
+        // Clear collision count
+        int zero = 0;
+        cl_int error = clEnqueueWriteBuffer(queue, statsBuffer, CL_TRUE, 0, 
+                                          sizeof(int), &zero, 0, nullptr, nullptr);
+        checkError(error, "clearing stats buffer");
+
+        // Update positions (GPU kernel)
+        FLOAT2 boundaries = {static_cast<float>(WINDOW_WIDTH), 
+                           static_cast<float>(WINDOW_HEIGHT)};
         error = clSetKernelArg(gpuKernel, 0, sizeof(cl_mem), &ballBuffer);
         error |= clSetKernelArg(gpuKernel, 1, sizeof(float), &deltaTime);
         error |= clSetKernelArg(gpuKernel, 2, sizeof(FLOAT2), &boundaries);
@@ -235,8 +323,8 @@ int main() {
         error = clEnqueueNDRangeKernel(queue, gpuKernel, 1, nullptr, &globalSize, 
                                       nullptr, 0, nullptr, nullptr);
         checkError(error, "enqueueing GPU kernel");
-        
-        // Set kernel arguments and run CPU kernel (now running on the same device)
+
+        // Handle collisions (CPU kernel)
         error = clSetKernelArg(cpuKernel, 0, sizeof(cl_mem), &ballBuffer);
         error |= clSetKernelArg(cpuKernel, 1, sizeof(int), &NUM_BALLS);
         error |= clSetKernelArg(cpuKernel, 2, sizeof(cl_mem), &statsBuffer);
@@ -245,25 +333,25 @@ int main() {
         error = clEnqueueNDRangeKernel(queue, cpuKernel, 1, nullptr, &globalSize, 
                                       nullptr, 0, nullptr, nullptr);
         checkError(error, "enqueueing CPU kernel");
-        
-        // Render
+
+        // Wait for kernels to complete
+        clFinish(queue);
+
+        // Read collision count
+        int collisionCount;
+        error = clEnqueueReadBuffer(queue, statsBuffer, CL_TRUE, 0,
+                                  sizeof(int), &collisionCount, 0, nullptr, nullptr);
+        if (collisionCount > 0) {
+            std::cout << "Collisions this frame: " << collisionCount << std::endl;
+        }
+
+        // Render frame
         render();
         
-        // Poll events
+        // Process events
         glfwPollEvents();
     }
     
-    // Cleanup
-    clReleaseMemObject(ballBuffer);
-    clReleaseMemObject(vertexBuffer);
-    clReleaseMemObject(statsBuffer);
-    clReleaseKernel(gpuKernel);
-    clReleaseKernel(cpuKernel);
-    clReleaseProgram(program);
-    clReleaseCommandQueue(queue);
-    clReleaseContext(context);
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    
+    cleanup();
     return 0;
 }
