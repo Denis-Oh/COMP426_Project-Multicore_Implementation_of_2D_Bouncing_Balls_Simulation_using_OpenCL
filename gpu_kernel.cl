@@ -24,27 +24,31 @@ __kernel void updateBallPositions(
     // Load ball data
     Ball ball = balls[gid];
     
-    // Update position
-    FLOAT2 velocity_delta = float2_multiply(ball.velocity, deltaTime);
-    FLOAT2 newPosition = float2_add(ball.position, velocity_delta);
+    // Add a small amount of gravity
+    ball.velocity.y += 100.0f * deltaTime;  // Positive Y is down in our coordinate system
     
-    // Handle wall collisions
+    // Update position
+    FLOAT2 newPosition = float2_add(ball.position, float2_multiply(ball.velocity, deltaTime));
+    
+    // Handle wall collisions with energy loss
+    float dampening = 0.8f;  // Energy loss coefficient
+    
     // Right and left walls
     if (newPosition.x + ball.radius > boundaries.x) {
         newPosition.x = boundaries.x - ball.radius;
-        ball.velocity.x = -ball.velocity.x;
+        ball.velocity.x = -ball.velocity.x * dampening;
     } else if (newPosition.x - ball.radius < 0) {
         newPosition.x = ball.radius;
-        ball.velocity.x = -ball.velocity.x;
+        ball.velocity.x = -ball.velocity.x * dampening;
     }
     
     // Top and bottom walls
     if (newPosition.y + ball.radius > boundaries.y) {
         newPosition.y = boundaries.y - ball.radius;
-        ball.velocity.y = -ball.velocity.y;
+        ball.velocity.y = -ball.velocity.y * dampening;
     } else if (newPosition.y - ball.radius < 0) {
         newPosition.y = ball.radius;
-        ball.velocity.y = -ball.velocity.y;
+        ball.velocity.y = -ball.velocity.y * dampening;
     }
     
     // Update ball data

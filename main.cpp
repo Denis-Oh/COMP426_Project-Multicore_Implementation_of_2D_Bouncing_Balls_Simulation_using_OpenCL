@@ -9,12 +9,12 @@
 #include "ball_def.h"
 
 // Constants
-const int NUM_BALLS = 50; 
+const int NUM_BALLS = 30;
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
-const float MIN_RADIUS = 10.0f;  
-const float MAX_RADIUS = 20.0f;  
-const float MAX_INITIAL_VELOCITY = 100.0f;  
+const float MIN_RADIUS = 15.0f;  
+const float MAX_RADIUS = 25.0f;  
+const float MAX_INITIAL_VELOCITY = 50.0f;  
 
 // OpenCL variables
 cl_platform_id platform;
