@@ -9,12 +9,12 @@
 #include "ball_def.h"
 
 // Constants
-const int NUM_BALLS = 30;
+const int NUM_BALLS = 5;  
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
-const float MIN_RADIUS = 15.0f;  
-const float MAX_RADIUS = 25.0f;  
-const float MAX_INITIAL_VELOCITY = 50.0f;  
+const float MIN_RADIUS = 15.0f;    
+const float MAX_RADIUS = 25.0f;   
+const float MAX_INITIAL_VELOCITY = 5.0f;
 
 // OpenCL variables
 cl_platform_id platform;
@@ -169,6 +169,16 @@ void initBalls() {
     std::uniform_real_distribution<float> radius(MIN_RADIUS, MAX_RADIUS);
     
     std::vector<Ball> balls(NUM_BALLS);
+    
+    // Different colors for each ball
+    const float colors[5][3] = {
+        {1.0f, 0.0f, 0.0f},  // Red
+        {0.0f, 1.0f, 0.0f},  // Green
+        {0.0f, 0.0f, 1.0f},  // Blue
+        {1.0f, 1.0f, 0.0f},  // Yellow
+        {1.0f, 0.0f, 1.0f}   // Magenta
+    };
+    
     for (auto& ball : balls) {
         // Ensure balls don't start too close to each other
         bool validPosition = false;
@@ -182,7 +192,7 @@ void initBalls() {
             for (int i = 0; i < &ball - balls.data(); i++) {
                 float dx = ball.position.x - balls[i].position.x;
                 float dy = ball.position.y - balls[i].position.y;
-                float minDist = ball.radius + balls[i].radius;
+                float minDist = ball.radius + balls[i].radius + 10.0f;  // More spacing
                 if (dx * dx + dy * dy < minDist * minDist) {
                     validPosition = false;
                     break;
@@ -190,17 +200,9 @@ void initBalls() {
             }
         }
         
-        // Set random velocity
-        ball.velocity.x = vel(gen);
-        ball.velocity.y = vel(gen);
-        
-        // Ensure minimum speed
-        float speed = sqrt(ball.velocity.x * ball.velocity.x + ball.velocity.y * ball.velocity.y);
-        if (speed < MAX_INITIAL_VELOCITY * 0.2f) {
-            float scale = MAX_INITIAL_VELOCITY * 0.2f / speed;
-            ball.velocity.x *= scale;
-            ball.velocity.y *= scale;
-        }
+        // Set very low initial velocity
+        ball.velocity.x = vel(gen) * 0.2f;
+        ball.velocity.y = vel(gen) * 0.2f;
     }
     
     cl_int error = clEnqueueWriteBuffer(queue, ballBuffer, CL_TRUE, 0, 
@@ -222,44 +224,45 @@ void render() {
                                       0, nullptr, nullptr);
     checkError(error, "reading ball data for rendering");
     
+    // Define colors for each ball
+    const float colors[5][3] = {
+        {1.0f, 0.0f, 0.0f},  // Red
+        {0.0f, 1.0f, 0.0f},  // Green
+        {0.0f, 0.0f, 1.0f},  // Blue
+        {1.0f, 1.0f, 0.0f},  // Yellow
+        {1.0f, 0.0f, 1.0f}   // Magenta
+    };
+    
     // Draw each ball
-    for (const auto& ball : balls) {
+    for (int i = 0; i < NUM_BALLS; i++) {
+        const Ball& ball = balls[i];
         const int segments = 32;
-        glColor3f(1.0f, 0.5f, 0.2f);  // Orange color
         
+        // Set ball color
+        glColor3f(colors[i][0], colors[i][1], colors[i][2]);
+        
+        // Draw filled circle
         glBegin(GL_TRIANGLE_FAN);
-        // Center vertex
-        glVertex2f(ball.position.x, ball.position.y);
-        
-        // Circle vertices
-        for (int i = 0; i <= segments; i++) {
-            float angle = 2.0f * M_PI * i / segments;
+        glVertex2f(ball.position.x, ball.position.y);  // Center
+        for (int j = 0; j <= segments; j++) {
+            float angle = 2.0f * M_PI * j / segments;
             float x = ball.position.x + cos(angle) * ball.radius;
             float y = ball.position.y + sin(angle) * ball.radius;
             glVertex2f(x, y);
         }
         glEnd();
         
-        // Draw outline
-        glColor3f(1.0f, 1.0f, 1.0f);  // White outline
+        // Draw white outline
+        glColor3f(1.0f, 1.0f, 1.0f);
         glBegin(GL_LINE_LOOP);
-        for (int i = 0; i < segments; i++) {
-            float angle = 2.0f * M_PI * i / segments;
+        for (int j = 0; j < segments; j++) {
+            float angle = 2.0f * M_PI * j / segments;
             float x = ball.position.x + cos(angle) * ball.radius;
             float y = ball.position.y + sin(angle) * ball.radius;
             glVertex2f(x, y);
         }
         glEnd();
     }
-    
-    // Debug: Draw window boundaries
-    glColor3f(1.0f, 1.0f, 1.0f);
-    glBegin(GL_LINE_LOOP);
-    glVertex2f(0, 0);
-    glVertex2f(WINDOW_WIDTH, 0);
-    glVertex2f(WINDOW_WIDTH, WINDOW_HEIGHT);
-    glVertex2f(0, WINDOW_HEIGHT);
-    glEnd();
     
     glfwSwapBuffers(window);
 }
