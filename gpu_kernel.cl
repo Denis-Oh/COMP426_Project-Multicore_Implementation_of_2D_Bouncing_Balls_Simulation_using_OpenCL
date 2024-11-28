@@ -1,15 +1,21 @@
-// Structure to represent a ball
-typedef struct {
-    float2 position;     // x, y position
-    float2 velocity;     // x, y velocity components
-    float radius;        // ball radius
-} Ball;
+#include "ball_def.h"
+
+// Helper functions for float2 operations
+FLOAT2 float2_add(FLOAT2 a, FLOAT2 b) {
+    FLOAT2 result = {a.x + b.x, a.y + b.y};
+    return result;
+}
+
+FLOAT2 float2_multiply(FLOAT2 a, float scalar) {
+    FLOAT2 result = {a.x * scalar, a.y * scalar};
+    return result;
+}
 
 // Kernel to update ball positions and handle wall collisions
 __kernel void updateBallPositions(
     __global Ball* balls,
     const float deltaTime,
-    const float2 boundaries,  // window width and height
+    const FLOAT2 boundaries,  // window width and height
     const int numBalls
 ) {
     int gid = get_global_id(0);
@@ -19,7 +25,8 @@ __kernel void updateBallPositions(
     Ball ball = balls[gid];
     
     // Update position
-    float2 newPosition = ball.position + ball.velocity * deltaTime;
+    FLOAT2 velocity_delta = float2_multiply(ball.velocity, deltaTime);
+    FLOAT2 newPosition = float2_add(ball.position, velocity_delta);
     
     // Handle wall collisions
     // Right and left walls
@@ -43,17 +50,4 @@ __kernel void updateBallPositions(
     // Update ball data
     ball.position = newPosition;
     balls[gid] = ball;
-}
-
-// Kernel to prepare visualization data for OpenGL
-__kernel void prepareVisualization(
-    __global const Ball* balls,
-    __global float4* vertices,  // x, y, radius, unused
-    const int numBalls
-) {
-    int gid = get_global_id(0);
-    if (gid >= numBalls) return;
-    
-    Ball ball = balls[gid];
-    vertices[gid] = (float4)(ball.position.x, ball.position.y, ball.radius, 0.0f);
 }
