@@ -361,12 +361,12 @@ int main() {
         clFinish(queue);
 
         // Process collision statistics
-        int collisionCount;
-        error = clEnqueueReadBuffer(queue, statsBuffer, CL_TRUE, 0,
-                                  sizeof(int), &collisionCount, 0, nullptr, nullptr);
-        if (collisionCount > 0) {
-            std::cout << "Collisions this frame: " << collisionCount << std::endl;
-        }
+        // int collisionCount;
+        // error = clEnqueueReadBuffer(queue, statsBuffer, CL_TRUE, 0,
+        //                           sizeof(int), &collisionCount, 0, nullptr, nullptr);
+        // if (collisionCount > 0) {
+        //     std::cout << "Collisions this frame: " << collisionCount << std::endl;
+        // }
 
         // Update display with new frame
         render();
