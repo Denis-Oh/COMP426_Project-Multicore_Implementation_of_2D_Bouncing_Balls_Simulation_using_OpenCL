@@ -9,12 +9,12 @@
 #include "ball_def.h"
 
 // Constants
-const int NUM_BALLS = 2;
+const int NUM_BALLS = 30;
 const int WINDOW_WIDTH = 800;
 const int WINDOW_HEIGHT = 600;
 const float MIN_RADIUS = 15.0f;    
 const float MAX_RADIUS = 25.0f;   
-const float MAX_INITIAL_VELOCITY = 5.0f;
+const float MAX_INITIAL_VELOCITY = 500.0f;
 
 // OpenCL variables
 cl_platform_id platform;
@@ -149,6 +149,8 @@ void initGraphics() {
     // Required for macOS to work correctly
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_TRUE);  // Add this for Retina displays
+    glfwWindowHint(GLFW_SAMPLES, 4);  // Enable MSAA
     
     window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Bouncing Balls", nullptr, nullptr);
     if (!window) {
@@ -159,51 +161,61 @@ void initGraphics() {
     
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);  // Enable vsync
-
+    
     // Set up the coordinate system
     glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0, WINDOW_WIDTH, WINDOW_HEIGHT, 0, -1, 1); // Note: Y-axis flipped for standard screen coordinates
+    glOrtho(0, WINDOW_WIDTH, WINDOW_HEIGHT, 0, -1, 1);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     
-    // Enable blending for smoother rendering
+    // Enable blending and anti-aliasing
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_MULTISAMPLE);  // Enable MSAA
 }
 
 // Initialize balls with random positions and velocities
 void initBalls() {
     std::vector<Ball> balls(NUM_BALLS);
     
+    // Set up random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> radiusDist(MIN_RADIUS, MAX_RADIUS);
+    std::uniform_real_distribution<float> posDist(0.0f, 1.0f);
+    std::uniform_real_distribution<float> velDist(-MAX_INITIAL_VELOCITY, MAX_INITIAL_VELOCITY);
+    
+    // Available radii
+    const float radii[3] = {15.0f, 20.0f, 25.0f};
+    
     for (int i = 0; i < NUM_BALLS; i++) {
-        // Add debug print
-        std::cout << "Initializing ball " << i << std::endl;
+        // Random radius from the three options
+        int radiusIndex = gen() % 3;
+        balls[i].radius = radii[radiusIndex];
         
-        balls[i].position.x = WINDOW_WIDTH / 2.0f + (i * 100);  // Space them out horizontally
-        balls[i].position.y = WINDOW_HEIGHT / 2.0f;             // Start at middle height
-        balls[i].velocity.x = (i % 2 == 0) ? 50.0f : -50.0f;   // Alternate directions
-        balls[i].velocity.y = 0.0f;                            // No initial vertical velocity
-        balls[i].radius = 20.0f;                               // Fixed radius
+        // Random position (keeping balls away from edges)
+        balls[i].position.x = balls[i].radius + 
+            posDist(gen) * (WINDOW_WIDTH - 2 * balls[i].radius);
+        balls[i].position.y = balls[i].radius + 
+            posDist(gen) * (WINDOW_HEIGHT - 2 * balls[i].radius);
+        
+        // Random velocity
+        balls[i].velocity.x = velDist(gen);
+        balls[i].velocity.y = velDist(gen);
 
-        // Debug print after initialization
+        // Debug print
         std::cout << "Ball " << i << " initialized: pos=(" 
                   << balls[i].position.x << "," << balls[i].position.y 
                   << "), vel=(" << balls[i].velocity.x << "," << balls[i].velocity.y 
                   << "), radius=" << balls[i].radius << std::endl;
     }
 
-    // Debug print before buffer write
-    std::cout << "Writing to OpenCL buffer..." << std::endl;
-
     cl_int error = clEnqueueWriteBuffer(queue, ballBuffer, CL_TRUE, 0, 
                                        sizeof(Ball) * NUM_BALLS, balls.data(), 
                                        0, nullptr, nullptr);
     checkError(error, "writing initial ball data");
-
-    // Debug print after buffer write
-    std::cout << "Buffer write complete." << std::endl;
 }
 
 // Render function
@@ -219,26 +231,28 @@ void render() {
                                       0, nullptr, nullptr);
     checkError(error, "reading ball data for rendering");
     
-    // Define colors for each ball
-    const float colors[5][3] = {
+    // Define just three colors
+    const float colors[3][3] = {
         {1.0f, 0.0f, 0.0f},  // Red
         {0.0f, 1.0f, 0.0f},  // Green
-        {0.0f, 0.0f, 1.0f},  // Blue
-        {1.0f, 1.0f, 0.0f},  // Yellow
-        {1.0f, 0.0f, 1.0f}   // Magenta
+        {0.0f, 0.0f, 1.0f}   // Blue
     };
+    
+    // Enable anti-aliasing for smoother circles
+    glEnable(GL_POINT_SMOOTH);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
     
     // Draw each ball
     for (int i = 0; i < NUM_BALLS; i++) {
         const Ball& ball = balls[i];
-        std::cout << "Ball " << i << ": pos=(" << ball.position.x << "," << ball.position.y 
-              << "), vel=(" << ball.velocity.x << "," << ball.velocity.y 
-              << "), radius=" << ball.radius << std::endl;
-
+        const int colorIndex = i % 3;  // Cycle through the 3 colors
+        
         const int segments = 32;
         
-        // Set ball color
-        glColor3f(colors[i][0], colors[i][1], colors[i][2]);
+        // Set ball color with alpha for smoother rendering
+        glColor4f(colors[colorIndex][0], colors[colorIndex][1], colors[colorIndex][2], 0.9f);
         
         // Draw filled circle
         glBegin(GL_TRIANGLE_FAN);
@@ -251,8 +265,9 @@ void render() {
         }
         glEnd();
         
-        // Draw white outline
-        glColor3f(1.0f, 1.0f, 1.0f);
+        // Draw outline with the same color but full alpha
+        glColor4f(colors[colorIndex][0], colors[colorIndex][1], colors[colorIndex][2], 1.0f);
+        glLineWidth(2.0f);  // Make the outline slightly thicker
         glBegin(GL_LINE_LOOP);
         for (int j = 0; j < segments; j++) {
             float angle = 2.0f * M_PI * j / segments;
@@ -263,6 +278,7 @@ void render() {
         glEnd();
     }
     
+    glFinish();  // Ensure all rendering is complete before swap
     glfwSwapBuffers(window);
 }
 
