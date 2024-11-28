@@ -1,75 +1,82 @@
 #include "ball_def.h"
 
+// Kernel for ball-to-ball collision detection and response
+// Simulates CPU-side task parallelism on M1 architecture
 __kernel void checkBallCollisions(
-    __global Ball* balls,
-    const int numBalls,
-    __global int* collisionCount
+    __global Ball* balls,           // Array of all balls in simulation
+    const int numBalls,             // Total number of balls
+    __global int* collisionCount    // Counter for collisions this frame
 ) {
+    // Get this thread's ball index
     int gid = get_global_id(0);
     if (gid >= numBalls - 1) return;
     
+    // Load first ball for comparison
     Ball ball1 = balls[gid];
     
+    // Check against all subsequent balls for collisions
     for (int i = gid + 1; i < numBalls; i++) {
         Ball ball2 = balls[i];
         
-        // Calculate distance between balls
+        // Calculate center-to-center vector between balls
         float dx = ball2.position.x - ball1.position.x;
         float dy = ball2.position.y - ball1.position.y;
         float distance = sqrt(dx * dx + dy * dy);
         
-        // Check for collision using actual radii
+        // Detect collision using combined radii
         float minDist = ball1.radius + ball2.radius;
         if (distance < minDist && distance > 0.0f) {
-            // Normalize collision vector
+            // Calculate normalized collision normal
             float nx = dx / distance;
             float ny = dy / distance;
             
-            // Relative velocity
+            // Calculate relative velocity vector
             float dvx = ball2.velocity.x - ball1.velocity.x;
             float dvy = ball2.velocity.y - ball1.velocity.y;
             
-            // Relative velocity along normal
+            // Project relative velocity onto collision normal
             float relativeVelocity = dvx * nx + dvy * ny;
             
-            // Don't process if balls are moving apart
+            // Only process collision if balls are moving toward each other
             if (relativeVelocity < 0) {
-                // Collision response with energy loss
-                float restitution = 0.7f;  // Reduced from 0.8 for more energy loss
+                // Collision elasticity (30% energy loss)
+                float restitution = 0.7f;
                 
-                // Calculate reduced impulse based on relative masses (using radius as mass approximation)
-                float mass1 = ball1.radius * ball1.radius;  // Mass proportional to area
+                // Calculate mass based on ball area
+                float mass1 = ball1.radius * ball1.radius;
                 float mass2 = ball2.radius * ball2.radius;
                 float totalMass = mass1 + mass2;
                 
+                // Calculate collision impulse magnitude
                 float j = -(1.0f + restitution) * relativeVelocity * (mass1 * mass2 / totalMass);
                 
-                // Apply impulse with mass factoring
+                // Calculate impulse factors based on mass
                 float impulse_factor1 = 1.0f / mass1;
                 float impulse_factor2 = 1.0f / mass2;
                 
+                // Convert impulse to vector components
                 float impulsex = j * nx;
                 float impulsey = j * ny;
                 
-                // Update velocities based on mass
+                // Apply impulses proportional to mass
                 ball1.velocity.x -= impulsex * impulse_factor1;
                 ball1.velocity.y -= impulsey * impulse_factor1;
                 ball2.velocity.x += impulsex * impulse_factor2;
                 ball2.velocity.y += impulsey * impulse_factor2;
                 
-                // Add some energy loss through friction
+                // Apply collision friction (2% energy loss)
                 ball1.velocity.x *= 0.98f;
                 ball1.velocity.y *= 0.98f;
                 ball2.velocity.x *= 0.98f;
                 ball2.velocity.y *= 0.98f;
                 
-                // Separate the balls to prevent sticking
+                // Resolve ball overlap to prevent sticking
                 float overlap = minDist - distance;
-                float percent = 0.8f;  // Penetration resolution percentage
+                float percent = 0.8f;  // Resolve 80% of overlap
                 float separationx = nx * overlap * percent;
                 float separationy = ny * overlap * percent;
                 
-                // Separate proportionally to mass
+                // Separate balls proportional to their masses
                 float sep_factor1 = mass2 / totalMass;
                 float sep_factor2 = mass1 / totalMass;
                 
@@ -78,10 +85,11 @@ __kernel void checkBallCollisions(
                 ball2.position.x += separationx * sep_factor2;
                 ball2.position.y += separationy * sep_factor2;
                 
-                // Write back changes
+                // Update ball states in global memory
                 balls[gid] = ball1;
                 balls[i] = ball2;
                 
+                // Increment collision counter atomically
                 atomic_add(collisionCount, 1);
             }
         }
